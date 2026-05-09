@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniParser - 截图解析工具</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f0f1a; 
+            color: #e0e0e0; 
+            min-height: 100vh;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        header { text-align: center; margin-bottom: 40px; }
+        h1 { font-size: 2.5rem; color: #fff; margin-bottom: 8px; }
+        .subtitle { color: #888; font-size: 1rem; }
+        .tag { 
+            display: inline-block; 
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; padding: 4px 12px; border-radius: 20px;
+            font-size: 0.8rem; margin-top: 12px;
+        }
+        
+        .upload-area {
+            border: 2px dashed #333;
+            border-radius: 16px;
+            padding: 60px 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 30px;
+        }
+        .upload-area:hover { border-color: #667eea; background: rgba(102,126,234,0.1); }
+        .upload-area.dragover { border-color: #667eea; background: rgba(102,126,234,0.2); }
+        .upload-icon { font-size: 3rem; margin-bottom: 16px; }
+        .upload-text { font-size: 1.1rem; color: #aaa; }
+        .upload-hint { font-size: 0.85rem; color: #666; margin-top: 8px; }
+        
+        #preview { display: none; margin: 20px 0; text-align: center; }
+        #preview img { max-width: 100%; border-radius: 12px; border: 1px solid #333; }
+        
+        .btn {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white; border: none; padding: 14px 32px;
+            border-radius: 8px; font-size: 1rem; cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        #result { display: none; margin-top: 40px; }
+        .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .result-title { font-size: 1.3rem; color: #fff; }
+        .badge { background: #22c55e; color: #000; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; }
+        
+        .result-image-container { position: relative; display: inline-block; max-width: 100%; }
+        #resultCanvas { max-width: 100%; border-radius: 12px; }
+        
+        .elements-panel {
+            background: #1a1a2e; border-radius: 12px; padding: 20px;
+            margin-top: 24px;
+        }
+        .panel-title { font-size: 1rem; color: #888; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .element-item {
+            background: #16213e; border-radius: 8px; padding: 12px 16px;
+            margin-bottom: 8px; display: flex; align-items: center; gap: 12px;
+        }
+        .element-type { 
+            background: #667eea; color: white; padding: 2px 8px; 
+            border-radius: 4px; font-size: 0.75rem; min-width: 60px; text-align: center;
+        }
+        .element-label { flex: 1; color: #ccc; font-size: 0.9rem; }
+        .element-bbox { color: #666; font-size: 0.8rem; font-family: monospace; }
+        
+        .json-output {
+            background: #1a1a2e; border-radius: 8px; padding: 16px;
+            margin-top: 16px; font-family: 'Courier New', monospace;
+            font-size: 0.85rem; color: #aaa; overflow-x: auto;
+            white-space: pre-wrap; max-height: 300px; overflow-y: auto;
+        }
+        
+        .loading { display: none; text-align: center; padding: 40px; }
+        .spinner {
+            width: 40px; height: 40px; border: 3px solid #333;
+            border-top-color: #667eea; border-radius: 50%;
+            animation: spin 1s linear infinite; margin: 0 auto 16px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { color: #888; }
+        
+        .error-msg {
+            background: rgba(239,68,68,0.1); border: 1px solid #ef4444;
+            color: #ef4444; padding: 12px 16px; border-radius: 8px;
+            margin-top: 20px; display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>OmniParser</h1>
+            <p class="subtitle">截图 → 结构化解析 → 智能自动化</p>
+            <span class="tag">开发阶段 · MiniMax视觉驱动</span>
+        </header>
+        
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📤</div>
+            <p class="upload-text">拖拽截图或点击上传</p>
+            <p class="upload-hint">支持 PNG, JPG, 最大 16MB</p>
+            <input type="file" id="fileInput" accept="image/*" style="display:none">
+        </div>
+        
+        <div id="preview">
+            <img id="previewImg" alt="预览">
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p class="loading-text">AI 解析中...</p>
+        </div>
+        
+        <div id="result">
+            <div class="result-header">
+                <span class="result-title">解析结果</span>
+                <span class="badge" id="elementCount">0 元素</span>
+            </div>
+            
+            <div class="result-image-container">
+                <img id="resultImg" alt="解析结果">
+                <canvas id="resultCanvas"></canvas>
+            </div>
+            
+            <div class="elements-panel">
+                <div class="panel-title">识别到的 UI 元素</div>
+                <div id="elementsList"></div>
+            </div>
+            
+            <div class="panel-title" style="margin-top:24px">原始 JSON</div>
+            <div class="json-output" id="jsonOutput"></div>
+        </div>
+        
+        <div class="error-msg" id="errorMsg"></div>
+    </div>
+    
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const preview = document.getElementById('preview');
+        const previewImg = document.getElementById('previewImg');
+        const loading = document.getElementById('loading');
+        const result = document.getElementById('result');
+        const resultImg = document.getElementById('resultImg');
+        const resultCanvas = document.getElementById('resultCanvas');
+        const elementsList = document.getElementById('elementsList');
+        const elementCount = document.getElementById('elementCount');
+        const jsonOutput = document.getElementById('jsonOutput');
+        const errorMsg = document.getElementById('errorMsg');
+        
+        // Drag & Drop
+        uploadArea.addEventListener('click', () => fileInput.click());
+        uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+        
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showError('请上传图片文件');
+                return;
+            }
+            if (file.size > 16 * 1024 * 1024) {
+                showError('文件大小不能超过 16MB');
+                return;
+            }
+            
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target.result;
+                preview.style.display = 'block';
+                uploadArea.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+            
+            // Upload & parse
+            uploadFile(file);
+        }
+        
+        async function uploadFile(file) {
+            showLoading(true);
+            hideError();
+            result.style.display = 'none';
+            
+            const formData = new FormData();
+            formData.append('image', file);
+            
+            try {
+                const resp = await fetch('/upload', { method: 'POST', body: formData });
+                const data = await resp.json();
+                
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+                
+                // Display result
+                resultImg.src = data.image_url;
+                result.style.display = 'block';
+                
+                // Draw elements on canvas
+                drawElements(data);
+                
+                // Show elements list
+                const elements = data.elements || [];
+                elementCount.textContent = elements.length + ' 元素';
+                elementsList.innerHTML = elements.map(el => `
+                    <div class="element-item">
+                        <span class="element-type">${el.type || 'unknown'}</span>
+                        <span class="element-label">${el.label || '(无标签)'}</span>
+                        <span class="element-bbox">${JSON.stringify(el.bbox || {})}</span>
+                    </div>
+                `).join('');
+                
+                // Show JSON
+                jsonOutput.textContent = JSON.stringify(data, null, 2);
+                
+            } catch (e) {
+                showError('上传失败: ' + e.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function drawElements(data) {
+            const img = resultImg;
+            img.onload = () => {
+                resultCanvas.width = img.naturalWidth;
+                resultCanvas.height = img.naturalHeight;
+                const ctx = resultCanvas.getContext('2d');
+                
+                const elements = data.elements || [];
+                const colors = {
+                    button: '#667eea',
+                    input: '#22c55e',
+                    image: '#f59e0b',
+                    text: '#888',
+                    container: '#3b82f6',
+                    header: '#ec4899',
+                    footer: '#8b5cf6',
+                    sidebar: '#06b6d4'
+                };
+                
+                elements.forEach(el => {
+                    const bbox = el.bbox || {};
+                    const x = (bbox.x / 100) * img.naturalWidth;
+                    const y = (bbox.y / 100) * img.naturalHeight;
+                    const w = (bbox.width / 100) * img.naturalWidth;
+                    const h = (bbox.height / 100) * img.naturalHeight;
+                    
+                    ctx.strokeStyle = colors[el.type] || '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(x, y, w, h);
+                    
+                    // Label
+                    ctx.fillStyle = colors[el.type] || '#fff';
+                    ctx.font = '14px sans-serif';
+                    ctx.fillText(el.label || el.type, x + 4, y + 16);
+                });
+                
+                // Make canvas overlay on image
+                resultCanvas.style.position = 'absolute';
+                resultCanvas.style.top = resultImg.offsetTop + 'px';
+                resultCanvas.style.left = resultImg.offsetLeft + 'px';
+                resultCanvas.style.width = resultImg.offsetWidth + 'px';
+                resultCanvas.style.height = resultImg.offsetHeight + 'px';
+            };
+        }
+        
+        function showLoading(show) { loading.style.display = show ? 'block' : 'none'; }
+        function showError(msg) { errorMsg.textContent = msg; errorMsg.style.display = 'block'; }
+        function hideError() { errorMsg.style.display = 'none'; }
+    </script>
+</body>
+</html>
