@@ -128,3 +128,11 @@ result = resp.json()
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **正在运行**: http://172.26.183.121:5000
+
+
+## 💰 Support This Project
+
+USDT (TRC20): `TN3W4H6rK2ce4vX9YnFQHwKENnH5u6q9TW`
+爱发电: https://afdian.net/@omni-parser
+
+Star ⭐ this repo if it helps you!
