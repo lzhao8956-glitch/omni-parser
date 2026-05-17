@@ -9,8 +9,9 @@ import base64
 import json
 from datetime import datetime
 
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory, send_file
 import requests
+from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
@@ -22,11 +23,15 @@ os.makedirs('static/results', exist_ok=True)
 
 # ── Parser Config ────────────────────────────────────────────────────
 # 开发模式：USE_MOCK=True 时返回模拟数据，不调任何外部API
-USE_MOCK = True  # 开发阶段用mock，发布前改为False
+USE_MOCK = False  # 已切换真实模型
 
 # MiniMax API Config (USE_MOCK=False时使用)
-MINIMAX_API_KEY = 'sk-cp-…HrEA'
-MINIMAX_BASE_URL = 'https://api.minimaxi.com/v1'
+import os
+MINIMAX_API_KEY = os.environ.get('MINIMAX_API_KEY', '')
+if not MINIMAX_API_KEY:
+    raise RuntimeError('MINIMAX_API_KEY environment variable not set')
+MINIMAX_BASE_URL = os.environ.get('MINIMAX_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+MINIMAX_MODEL = 'qwen-vl-plus'
 
 # ── Routes ─────────────────────────────────────────────────────
 
@@ -55,6 +60,13 @@ def upload():
         result = parse_screenshot(filepath)
         result['image_url'] = f'/uploads/{filename}'
         result['timestamp'] = datetime.now().isoformat()
+        
+        # 生成可视化标注图
+        elements = result.get('elements', [])
+        layout = result.get('layout', {})
+        if elements:
+            result['visual_url'] = draw_element_boxes(filepath, elements, layout)
+        
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -62,6 +74,10 @@ def upload():
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory('static/uploads', filename)
+
+@app.route('/results/<filename>')
+def result_file(filename):
+    return send_from_directory('static/results', filename)
 
 # ── Parser Logic ─────────────────────────────────────────────────
 
@@ -73,8 +89,6 @@ def parse_screenshot(image_path: str) -> dict:
     """
     if USE_MOCK:
         return mock_parse_result(image_path)
-    elif USE_OMNIPARSER:
-        return call_omniparser_api(image_path)
     else:
         return call_minimax_vision(image_path)
 
@@ -138,7 +152,7 @@ def call_minimax_vision(image_path: str) -> dict:
     ]
     
     payload = {
-        "model": "MiniMax-M2.7",
+        "model": MINIMAX_MODEL,
         "messages": messages,
         "temperature": 0.3
     }
@@ -148,7 +162,7 @@ def call_minimax_vision(image_path: str) -> dict:
         "Content-Type": "application/json"
     }
     
-    resp = requests.post(f"{MINIMAX_BASE_URL}/text/chatcompletion_v2", 
+    resp = requests.post(f"{MINIMAX_BASE_URL}/chat/completions", 
                         headers=headers, json=payload, timeout=60)
     resp.raise_for_status()
     
@@ -190,6 +204,66 @@ def call_omniparser_api(image_path: str) -> dict:
     resp.raise_for_status()
     return resp.json()
 
+def draw_element_boxes(image_path: str, elements: list, layout: dict) -> str:
+    """在截图上画框标注元素，返回结果图片路径"""
+    img = Image.open(image_path).convert('RGB')
+    w, h = img.size
+    draw = ImageDraw.Draw(img)
+    
+    # 颜色映射
+    colors = {
+        'button': '#FF6B6B',
+        'input': '#4ECDC4',
+        'image': '#45B7D1',
+        'text': '#96CEB4',
+        'container': '#FFEAA7',
+        'header': '#DDA0DD',
+        'footer': '#98D8C8',
+        'sidebar': '#F7DC6F',
+        'default': '#FF9F43'
+    }
+    
+    # 画元素框
+    for el in elements:
+        bbox = el.get('bbox', {})
+        x = bbox.get('x', 0) / 100 * w
+        y = bbox.get('y', 0) / 100 * h
+        ew = bbox.get('width', 0) / 100 * w
+        eh = bbox.get('height', 0) / 100 * h
+        color = colors.get(el.get('type', 'default'), colors['default'])
+        
+        # 画矩形框
+        draw.rectangle([x, y, x+ew, y+eh], outline=color, width=3)
+        # 画标签
+        label = el.get('label', el.get('type', ''))
+        draw.text((x+5, y+5), f"{el.get('type','')}: {label}", fill=color)
+    
+    # 保存结果
+    result_filename = f"result_{uuid.uuid4().hex}.png"
+    result_path = os.path.join('static/results', result_filename)
+    img.save(result_path)
+    return f'/results/{result_filename}'
+
+@app.route('/visualize/<filename>')
+def visualize(filename):
+    """对已上传的图片进行可视化标注"""
+    filepath = os.path.join('static/uploads', filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    
+    # 从请求参数获取elements和layout
+    elements = request.args.get('elements', '[]')
+    layout = request.args.get('layout', '{}')
+    try:
+        elements = json.loads(elements)
+        layout = json.loads(layout)
+    except:
+        elements = []
+        layout = {}
+    
+    result_url = draw_element_boxes(filepath, elements, layout)
+    return jsonify({'result_url': result_url})
+
 @app.route('/health')
 def health():
     return jsonify({
@@ -201,4 +275,4 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)
